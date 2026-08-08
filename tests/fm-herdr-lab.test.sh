@@ -20,13 +20,26 @@ cat > "$FAKEBIN/herdr" <<'SH'
 set -eu
 printf '%s\n' "$*" >> "$FM_FAKE_HERDR_LOG"
 state=$FM_FAKE_HERDR_STATE
-last=
+session=
+separator_seen=0
+expect_session=0
 for arg in "$@"; do
-  previous=$last
-  last=$arg
+  if [ "$expect_session" -eq 1 ]; then
+    session=$arg
+    expect_session=0
+    continue
+  fi
+  if [ "$arg" = -- ]; then
+    separator_seen=1
+    continue
+  fi
+  if [ "$arg" = --session ]; then
+    [ "$separator_seen" -eq 0 ] || { echo "fake herdr: --session entered the agent argument tail" >&2; exit 90; }
+    [ -z "$session" ] || { echo "fake herdr: duplicate --session" >&2; exit 90; }
+    expect_session=1
+  fi
 done
-[ "${previous:-}" = --session ] || { echo "fake herdr: missing trailing --session" >&2; exit 90; }
-session=$last
+[ "$expect_session" -eq 0 ] && [ -n "$session" ] || { echo "fake herdr: missing Herdr-level --session" >&2; exit 90; }
 default_socket=$(cat "$state/default-socket")
 lab_state=absent
 [ ! -f "$state/$session" ] || lab_state=$(cat "$state/$session")
@@ -156,6 +169,26 @@ test_provision_run_and_guarded_teardown() {
   pass "fm-herdr-lab: provisioning, scoped calls, guarded teardown, and fleet tripwire are deterministic"
 }
 
+test_run_scopes_herdr_before_agent_arguments() {
+  local name="fm-lab-run-args-$$" first_call second_call
+  : > "$FAKE_LOG"
+
+  run_with_fake "$ROOT/bin/fm-herdr-lab.sh" run "$name" workspace list >/dev/null \
+    || fail "run without an agent argument tail failed"
+  first_call=$(sed -n '1p' "$FAKE_LOG")
+  [ "$first_call" = "workspace list --session $name" ] \
+    || fail "run without an agent argument tail changed session placement: $first_call"
+
+  run_with_fake "$ROOT/bin/fm-herdr-lab.sh" run "$name" \
+    agent start worker --kind pi --pane pane-1 -- --agent-flag agent-value >/dev/null \
+    || fail "run with an agent argument tail failed"
+  second_call=$(sed -n '2p' "$FAKE_LOG")
+  [ "$second_call" = "agent start worker --kind pi --pane pane-1 --session $name -- --agent-flag agent-value" ] \
+    || fail "run did not place the session flag before the agent argument tail: $second_call"
+
+  pass "fm-herdr-lab: run keeps the session flag in Herdr arguments"
+}
+
 test_missing_tripwire_blocks_destruction() {
   local name="fm-lab-no-tripwire-$$" status=0 before after
   printf '%s\n' running > "$FAKE_STATE/$name"
@@ -236,6 +269,7 @@ SH
 
 test_refuses_unsafe_names
 test_provision_run_and_guarded_teardown
+test_run_scopes_herdr_before_agent_arguments
 test_missing_tripwire_blocks_destruction
 test_changed_default_trips_after_teardown
 test_stopped_owned_lab_can_reprovision
