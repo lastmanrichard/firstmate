@@ -147,7 +147,7 @@ fm_herdr_lab_cli() { # <session> <herdr arguments...>
   for arg in "$@"; do
     case "$arg" in
       --session|--session=*)
-        fm_herdr_lab_error "run forbids caller-supplied --session; the helper appends the lab session"
+        fm_herdr_lab_error "run forbids caller-supplied --session; the helper adds the lab session"
         return 1
         ;;
     esac

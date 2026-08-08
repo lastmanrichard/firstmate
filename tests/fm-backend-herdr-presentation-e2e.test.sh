@@ -39,7 +39,7 @@ export ACTIVE_SEEDED_CONTROL POST_CREATE_ABORT_CONTROL TMP_ROOT
 
 # Log every production-adapter call, remove its already-validated trailing
 # session flag, and send the operation through the lab helper so that helper
-# remains the sole process which appends the real trailing session flag.
+# remains the sole process which adds the real Herdr-level session flag.
 # The adapter's deliberately session-independent version read cannot pass the
 # helper's leading-option guard, so the wrapper sends only that read straight
 # to the absolute real binary with the same explicit trailing lab session.
