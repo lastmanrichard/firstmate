@@ -389,8 +389,8 @@ test_herdr_lab_contract_is_explicit_and_complete() {
     "Herdr lab brief missing helper-owned provisioning"
   assert_grep "\"\$HERDR_LAB_HELPER\" teardown \"\$HERDR_LAB_SESSION\"" "$brief" \
     "Herdr lab brief missing helper-owned teardown"
-  assert_grep "required trailing \`--session \"\$HERDR_LAB_SESSION\"\`" "$brief" \
-    "Herdr lab brief missing the per-call trailing session contract"
+  assert_grep "inserts \`--session \"\$HERDR_LAB_SESSION\"\` before a literal \`--\` agent-argument tail" "$brief" \
+    "Herdr lab brief missing safe session placement for agent arguments"
   assert_grep "direct \`herdr server stop\`" "$brief" \
     "Herdr lab brief missing the forbidden server-global command list"
   assert_grep "records the live default session before provisioning" "$brief" \

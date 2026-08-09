@@ -85,7 +85,8 @@ export default function (pi: ExtensionAPI) {
 EOF
 
 # Route production adapter invocations through the guarded helper too. The shim
-# removes only the adapter's validated trailing pair, then the helper appends it.
+# removes only the adapter's validated trailing pair, then the helper adds its
+# own Herdr-level session flag.
 cat > "$FAKEBIN/herdr" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail

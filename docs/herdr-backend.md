@@ -294,7 +294,8 @@ Never use ambient `herdr server stop` for Firstmate verification.
 An environment-only session selection can silently reach a different running server, and the ambient stop command has no explicit target.
 
 `bin/fm-herdr-lab.sh` is the sole supported lifecycle helper for isolated verification.
-It provisions only non-default names beginning with `fm-lab-`, appends an explicit `--session` to allowed task commands, refuses caller-supplied session flags and server/session lifecycle subcommands, and performs destructive stop/delete only through its guarded lifecycle actions.
+It provisions only non-default names beginning with `fm-lab-`, adds an explicit Herdr-level `--session` to allowed task commands, refuses caller-supplied session flags and server/session lifecycle subcommands, and performs destructive stop/delete only through its guarded lifecycle actions.
+That session flag is placed immediately before the first literal `--` agent-argument separator when a command has one, and appended otherwise; a trailing flag after `--` would reach the agent instead of Herdr and silently resolve the live default session.
 Immediately before every destructive call it re-queries the named session and refuses empty, missing, literal `default`, or `default:true` identities.
 Its before/after tripwire requires the live default-session snapshot to remain byte-identical.
 
