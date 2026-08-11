@@ -29,6 +29,7 @@ set -u
 CONTROL="$ROOT/bin/fm-control.sh"
 SPAWN="$ROOT/bin/fm-spawn.sh"
 PROMOTE="$ROOT/bin/fm-promote.sh"
+BRIEF_TOOL="$ROOT/bin/fm-brief.sh"
 X_LINK="$ROOT/bin/fm-x-link.sh"
 # fm_test_tmproot's own cleanup trap fires when its command substitution exits,
 # so recreate the root before resolving it and clean it up from this file's trap.
@@ -1280,15 +1281,17 @@ test_relaunch_of_a_promoted_scout_uses_the_recorded_provider_identity() {
 
 # A no-mistakes task recorded before this contract existed has provider identity
 # on neither side. That cannot prove an independent review, so the relaunch stops
-# - and re-scaffolding the brief, which the refusal names, is a real recovery
-# rather than a dead end.
+# - and the recovery the refusal names is then performed literally here, so the
+# instruction is pinned to a step that actually works. fm-brief.sh only scaffolds
+# a brief that does not exist yet, so amending the existing one is the repair.
 test_relaunch_without_provider_provenance_refuses_until_the_brief_records_it() {
-  local dir out rc meta
+  local dir out rc meta brief
   dir=$(new_case preprovider rl36)
   add_ship_task "$dir" rl36 claude
   meta="$dir/home/state/rl36.meta"
-  printf '# brief for rl36\n\nDelivery contract: mode=no-mistakes\nDo the thing.\n' \
-    > "$dir/home/data/rl36/brief.md"
+  brief="$dir/home/data/rl36/brief.md"
+  printf '# brief for rl36\n\n# Definition of done\nDelivery contract: mode=no-mistakes\nDo the thing.\n' \
+    > "$brief"
   grep -v '^implementation_provider=' "$meta" > "$meta.pre"
   mv "$meta.pre" "$meta"
 
@@ -1297,16 +1300,23 @@ test_relaunch_without_provider_provenance_refuses_until_the_brief_records_it() {
   expect_code 1 "$rc" "a relaunch with no provider provenance anywhere should refuse"
   assert_contains "$out" "cannot prove an independent AI review" \
     "the refusal should name the exact inability to prove independence"
-  assert_contains "$out" "fm-brief.sh rl36" "the refusal should name the recovery"
+  assert_contains "$out" "Validation contract: implementation-provider=" \
+    "the refusal should name the brief line that repairs it"
   [ -z "$(cat "$dir/fake/literal")" ] || fail "a refused relaunch must deliver no launch bytes"
 
-  printf '# brief for rl36\n\nDelivery contract: mode=no-mistakes\nValidation contract: implementation-provider=openai\nDo the thing.\n' \
-    > "$dir/home/data/rl36/brief.md"
+  out=$(FM_HOME="$dir/home" "$BRIEF_TOOL" rl36 proj --mode no-mistakes --implementation-provider openai 2>&1)
+  rc=$?
+  expect_code 1 "$rc" "re-scaffolding over an existing brief is not the recovery"
+  assert_contains "$out" "already exists" "fm-brief.sh should refuse to overwrite the task's brief"
+
+  sed 's/^Delivery contract: mode=no-mistakes$/&\nValidation contract: implementation-provider=openai/' \
+    "$brief" > "$brief.amended"
+  mv "$brief.amended" "$brief"
   out=$(run_spawn "$dir" rl36 --relaunch --harness claude); rc=$?
-  expect_code 0 "$rc" "a re-scaffolded brief should let the relaunch proceed"$'\n'"$out"
+  expect_code 0 "$rc" "the named brief amendment should let the relaunch proceed"$'\n'"$out"
   [ "$(meta_field "$dir" rl36 implementation_provider)" = openai ] \
-    || fail "the re-scaffolded provider identity must be recorded on the task, got '$(meta_field "$dir" rl36 implementation_provider)'"
-  pass "fm-spawn --relaunch: missing provider provenance stops, and re-scaffolding the brief recovers it"
+    || fail "the amended provider identity must be recorded on the task, got '$(meta_field "$dir" rl36 implementation_provider)'"
+  pass "fm-spawn --relaunch: missing provider provenance stops, and amending the brief recovers it"
 }
 
 # Provenance that disagrees between the record and the brief is never resolved by

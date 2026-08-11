@@ -1625,9 +1625,11 @@ if [ "$KIND" = ship ]; then
     # A relaunch carries no flags: the provider provenance is whichever of the
     # task record and the brief holds it. A promoted scout has it only in the
     # record (fm-promote.sh writes it and never rewrites the scout brief), and a
-    # task predating this contract has it in neither until its brief is
-    # re-scaffolded, which is the supported recovery. Silence on one side is
-    # filled from the other; disagreement between them is still a refusal.
+    # task predating this contract has it in neither until the validation
+    # contract line is added to its brief, which is the supported recovery
+    # (fm-brief.sh scaffolds a new brief and never rewrites an existing one).
+    # Silence on one side is filled from the other; disagreement between them is
+    # still a refusal.
     if [ "$RELAUNCH" -eq 1 ] && [ -z "$IMPLEMENTATION_PROVIDER" ]; then
       IMPLEMENTATION_PROVIDER=$BRIEF_IMPLEMENTATION_PROVIDER
     fi
@@ -1641,11 +1643,11 @@ if [ "$KIND" = ship ]; then
       if [ "$RELAUNCH" -eq 1 ] && [ -n "$IMPLEMENTATION_PROVIDER" ]; then
         echo "warning: $BRIEF records no implementation provider (promoted from a scout, or scaffolded before no-mistakes briefs recorded one); relaunching on the task's recorded implementation-provider=$IMPLEMENTATION_PROVIDER - the replacement must start no-mistakes with that provider" >&2
       else
-        echo "error: $BRIEF records no implementation provider; without authoritative provider identity Firstmate cannot prove an independent AI review; re-scaffold it with bin/fm-brief.sh $ID <repo> --mode no-mistakes --implementation-provider <openai|anthropic>" >&2
+        echo "error: $BRIEF records no implementation provider; without authoritative provider identity Firstmate cannot prove an independent AI review; add the line 'Validation contract: implementation-provider=<openai|anthropic>' to that brief's '# Definition of done', beneath its delivery contract line" >&2
         exit 1
       fi
     elif [ "$BRIEF_IMPLEMENTATION_PROVIDER" != "$IMPLEMENTATION_PROVIDER" ]; then
-      echo "error: validation mismatch for $ID: the brief says implementation-provider=$BRIEF_IMPLEMENTATION_PROVIDER but this task carries implementation-provider=$IMPLEMENTATION_PROVIDER; correct the flag or re-scaffold the brief" >&2
+      echo "error: validation mismatch for $ID: the brief says implementation-provider=$BRIEF_IMPLEMENTATION_PROVIDER but this task carries implementation-provider=$IMPLEMENTATION_PROVIDER; correct the flag, or correct the brief's 'Validation contract: implementation-provider=' line, so the worker's instructions and the task record agree" >&2
       exit 1
     fi
   elif [ -n "$BRIEF_IMPLEMENTATION_PROVIDER" ]; then
