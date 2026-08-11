@@ -51,7 +51,7 @@ make_spawn_case() {  # <name> <harness> <id>
   fm_git_worktree "$proj" "$wt" "wt-$name"
   touch "$home/state/.last-watcher-beat"
   mkdir -p "$home/data/$id"
-  printf 'brief for %s\n' "$id" > "$home/data/$id/brief.md"
+  printf 'Delivery contract: mode=no-mistakes\nValidation contract: implementation-provider=openai\nbrief for %s\n' "$id" > "$home/data/$id/brief.md"
   printf '%s\n' "$case_dir|$home|$proj|$wt|$fakebin"
 }
 
@@ -61,7 +61,7 @@ run_spawn() {  # <home> <wt> <fakebin> <spawn-args...>
   # fixed valid one.
   local home=$1 wt=$2 fakebin=$3
   shift 3
-  set -- "$@" --mode no-mistakes --yolo off
+  set -- "$@" --mode no-mistakes --implementation-provider openai --yolo off
   FM_ROOT_OVERRIDE='' FM_HOME="$home" \
     FM_STATE_OVERRIDE="$home/state" FM_DATA_OVERRIDE="$home/data" \
     FM_PROJECTS_OVERRIDE="$home/projects" FM_CONFIG_OVERRIDE="$home/config" \

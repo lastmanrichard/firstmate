@@ -202,13 +202,23 @@ test_ship_modes_generate_clean_briefs() {
   for id_mode in "brief-nomistakes-a1:no-mistakes" "brief-directpr-a2:direct-PR" "brief-localonly-a3:local-only"; do
     id=${id_mode%%:*}
     mode=${id_mode##*:}
-    FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode "$mode" >/dev/null 2>&1; status=$?
+    if [ "$mode" = no-mistakes ]; then
+      FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode "$mode" --implementation-provider openai >/dev/null 2>&1; status=$?
+    else
+      FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode "$mode" >/dev/null 2>&1; status=$?
+    fi
     expect_code 0 "$status" "fm-brief.sh $id --mode $mode should exit 0"
     brief="$home/data/$id/brief.md"
     assert_present "$brief" "$id: brief was not scaffolded"
     assert_grep "# Definition of done" "$brief" "$id: brief missing Definition of done section"
     grep -qx "Delivery contract: mode=$mode" "$brief" \
       || fail "$id: brief did not record its machine-readable delivery contract line"
+    if [ "$mode" = no-mistakes ]; then
+      grep -qx "Validation contract: implementation-provider=openai" "$brief" \
+        || fail "$id: brief did not record its machine-readable validation contract line"
+    else
+      assert_no_grep '^Validation contract:' "$brief" "$id: review-less path unexpectedly records an AI review contract"
+    fi
     assert_grep "{TASK}" "$brief" "$id: brief missing the {TASK} placeholder"
     assert_grep "mid-task \`working:\` line (including setup complete) is nonterminal" "$brief" \
       "$id: brief missing nonterminal working:/setup-complete gate protection"
@@ -244,6 +254,59 @@ ROWS
   pass "fm-brief.sh: ship --mode is required and closed-set validated"
 }
 
+# Independent review applies only to no-mistakes, and the selected implementation
+# provider must be a structurally established family that the owning no-mistakes
+# interface accepts. The scaffold passes it through without owning a duplicate
+# reviewer catalog.
+test_independent_review_provider_contract() {
+  local home brief out status
+  home="$TMP_ROOT/provider-contract-home"
+  mkdir -p "$home/data"
+
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" provider-openai firstmate \
+    --mode no-mistakes --implementation-provider openai >/dev/null 2>&1 \
+    || fail "OpenAI implementation provider should scaffold"
+  brief="$home/data/provider-openai/brief.md"
+  assert_grep 'Validation contract: implementation-provider=openai' "$brief" \
+    "OpenAI implementation provider was not recorded"
+  # shellcheck disable=SC2016 # Backticks are literal generated-brief syntax.
+  assert_grep 'Start the run with `--implementation-provider openai`' "$brief" \
+    "OpenAI implementation provider was not passed to no-mistakes"
+
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" provider-anthropic firstmate \
+    --mode no-mistakes --implementation-provider anthropic >/dev/null 2>&1 \
+    || fail "Anthropic implementation provider should scaffold"
+  brief="$home/data/provider-anthropic/brief.md"
+  assert_grep 'Validation contract: implementation-provider=anthropic' "$brief" \
+    "Anthropic implementation provider was not recorded"
+  # shellcheck disable=SC2016 # Backticks are literal generated-brief syntax.
+  assert_grep 'Start the run with `--implementation-provider anthropic`' "$brief" \
+    "Anthropic implementation provider was not passed to no-mistakes"
+  assert_grep 'cannot obtain and verify a supported authenticated reviewer from the opposite provider family' "$brief" \
+    "unavailable opposite-provider reviewer does not stop with the exact inability"
+
+  out=$(FM_HOME="$home" "$ROOT/bin/fm-brief.sh" provider-missing firstmate --mode no-mistakes 2>&1)
+  status=$?
+  [ "$status" -ne 0 ] || fail "missing implementation provider should be refused"
+  assert_contains "$out" "cannot prove an independent AI review" \
+    "missing implementation provider refusal did not explain the consequence"
+
+  out=$(FM_HOME="$home" "$ROOT/bin/fm-brief.sh" provider-unknown firstmate \
+    --mode no-mistakes --implementation-provider unknown 2>&1)
+  status=$?
+  [ "$status" -ne 0 ] || fail "unknown implementation provider should be refused"
+  assert_contains "$out" "must be openai or anthropic" \
+    "unknown implementation provider refusal did not name the supported structural families"
+
+  out=$(FM_HOME="$home" "$ROOT/bin/fm-brief.sh" provider-direct firstmate \
+    --mode direct-PR --implementation-provider openai 2>&1)
+  status=$?
+  [ "$status" -ne 0 ] || fail "direct-PR should refuse an AI review provider"
+  assert_contains "$out" "direct-PR performs no AI review and remains unchanged" \
+    "review-less direct-PR path did not remain explicit"
+  pass "fm-brief.sh: provider contract covers both families, unknown identity, unavailable opposite review, and review-less paths"
+}
+
 # The registry is the captain's standing posture, not this task's answer: the
 # scaffold must follow the explicit flag even when the project is registered
 # with a different mode, and must not consult the registry at all.
@@ -251,7 +314,7 @@ test_ship_mode_is_explicit_not_registry() {
   local home brief
   home="$TMP_ROOT/explicit-over-registry-home"
   write_registry "$home"
-  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" brief-explicit-a5 direct-proj --mode no-mistakes >/dev/null 2>&1 \
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" brief-explicit-a5 direct-proj --mode no-mistakes --implementation-provider openai >/dev/null 2>&1 \
     || fail "explicit no-mistakes brief on a direct-PR project should scaffold"
   brief="$home/data/brief-explicit-a5/brief.md"
   grep -qx "Delivery contract: mode=no-mistakes" "$brief" \
@@ -285,7 +348,7 @@ test_delivery_flags_are_refused_where_they_do_not_apply() {
 yolo on a ship brief|brief-refused-b1 some-proj --mode direct-PR --yolo on|--yolo is not a brief input
 yolo=value form on a ship brief|brief-refused-b2 some-proj --mode direct-PR --yolo=off|--yolo is not a brief input
 mode on a scout brief|brief-refused-b3 some-proj --scout --mode direct-PR|--mode applies only to ship briefs
-mode on a secondmate charter|brief-refused-b4 --secondmate --no-projects --mode no-mistakes|--mode applies only to ship briefs
+mode on a secondmate charter|brief-refused-b4 --secondmate --no-projects --mode no-mistakes --implementation-provider openai|--mode applies only to ship briefs
 ROWS
   pass "fm-brief.sh: --yolo and scout/secondmate --mode are refused, never silently dropped"
 }
@@ -326,7 +389,7 @@ test_no_mistakes_dod_wording() {
   home="$TMP_ROOT/wording-home"
   mkdir -p "$home/data"
   id="brief-wording-b1"
-  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode no-mistakes >/dev/null 2>&1
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode no-mistakes --implementation-provider openai >/dev/null 2>&1
   brief="$home/data/$id/brief.md"
   assert_present "$brief" "brief was not scaffolded"
   assert_grep "no-mistakes itself provides for the mechanics" "$brief" \
@@ -359,7 +422,7 @@ test_ship_project_memory_wording() {
   home="$TMP_ROOT/project-memory-home"
   mkdir -p "$home/data"
   id="brief-memory-c1"
-  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode no-mistakes >/dev/null 2>&1
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode no-mistakes --implementation-provider openai >/dev/null 2>&1
   brief="$home/data/$id/brief.md"
   assert_present "$brief" "brief was not scaffolded"
   assert_grep "Record only project knowledge useful to almost every future session." "$brief" \
@@ -376,7 +439,7 @@ test_herdr_lab_contract_is_explicit_and_complete() {
   home="$TMP_ROOT/herdr-lab-home"
   mkdir -p "$home/data"
   id="brief-herdr-lab-d1"
-  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" firstmate --mode no-mistakes --herdr-lab >/dev/null 2>&1
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" firstmate --mode no-mistakes --implementation-provider openai --herdr-lab >/dev/null 2>&1
   brief="$home/data/$id/brief.md"
   assert_present "$brief" "Herdr lab brief was not scaffolded"
   assert_grep "# Herdr isolation - HARD SAFETY CONTRACT" "$brief" \
@@ -428,7 +491,7 @@ test_herdr_lab_omission_is_loud_for_ship_and_scout() {
     if [ "$kind" = scout ]; then
       FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" firstmate --scout >/dev/null 2>&1
     else
-      FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" firstmate --mode no-mistakes >/dev/null 2>&1
+      FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" firstmate --mode no-mistakes --implementation-provider openai >/dev/null 2>&1
     fi
     brief="$home/data/$id/brief.md"
     assert_grep "# Herdr lifecycle declaration - NOT ENABLED" "$brief" \
@@ -643,7 +706,7 @@ test_pause_verb_override_renders_all_brief_scaffolds() {
     case "$kind" in
       ship)
         FM_HOME="$home" FM_CLASSIFY_PAUSED_VERB=awaiting \
-          "$ROOT/bin/fm-brief.sh" "$id" firstmate --mode no-mistakes >/dev/null 2>&1
+          "$ROOT/bin/fm-brief.sh" "$id" firstmate --mode no-mistakes --implementation-provider openai >/dev/null 2>&1
         ;;
       scout)
         FM_HOME="$home" FM_CLASSIFY_PAUSED_VERB=awaiting \
@@ -715,6 +778,7 @@ test_no_heredoc_in_command_substitution
 test_help_includes_entire_header
 test_ship_modes_generate_clean_briefs
 test_ship_mode_is_required_and_closed_set
+test_independent_review_provider_contract
 test_ship_mode_is_explicit_not_registry
 test_delivery_flags_are_refused_where_they_do_not_apply
 test_faster_paths_use_configured_authority_without_stacked_review

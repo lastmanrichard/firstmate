@@ -147,6 +147,7 @@ Use the discovery surface in the current authenticated environment because suppo
 For an unfamiliar harness or model namespace, establish support and provider identity from that harness's authoritative CLI help, model listing, or current documentation rather than guessing from a name or prefix.
 A listing that reaches the account and does not contain the model is concrete evidence the model is unsupported: block that candidate and quote the result.
 A discovery surface you could not reach establishes nothing; report that as uncertainty rather than turning it into a supported or unsupported verdict.
+For a `no-mistakes` task, use that structural discovery to supply the implementation provider contract required by `fm-brief`, `fm-spawn`, or `fm-promote`; [`docs/architecture.md`](../../../docs/architecture.md) "Delivery modes are explicit per task" owns the opposite-provider review boundary and failure behavior.
 
 When a requested effort value is outside the harness-specific accepted set, `fm-spawn` records the requested `effort=` in meta but emits no effort flag for that harness.
 This preserves launch success instead of passing a known-bad value.

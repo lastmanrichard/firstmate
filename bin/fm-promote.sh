@@ -8,11 +8,14 @@
 # according to this task's delivery mode).
 # A scout records no delivery posture, so promotion is where this task's delivery
 # contract is decided: --mode and --yolo are REQUIRED and written into the meta
-# alongside the kind= flip. Firstmate resolves both at promotion time, having just
+# alongside the kind= flip. A no-mistakes promotion also requires the implementation
+# provider established from the selected worker model's authoritative catalog; review-less
+# modes refuse it. Firstmate resolves these at promotion time, having just
 # read the scout's report (AGENTS.md section 7); data/projects.md holds the
 # captain's standing posture as context, and this script never looks it up.
 # no-mistakes-prod-only is a registry policy rather than a task mode and is refused.
-# Usage: fm-promote.sh <task-id> --mode <no-mistakes|direct-PR|local-only> --yolo <on|off>
+# Usage: fm-promote.sh <task-id> --mode no-mistakes --implementation-provider <openai|anthropic> --yolo <on|off>
+#        fm-promote.sh <task-id> --mode <direct-PR|local-only> --yolo <on|off>
 set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -26,8 +29,10 @@ STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 . "$SCRIPT_DIR/fm-wake-lib.sh"
 
 MODE=
+IMPLEMENTATION_PROVIDER=
 YOLO=
 MODE_SET=0
+IMPLEMENTATION_PROVIDER_SET=0
 YOLO_SET=0
 POS=()
 want_value=
@@ -38,6 +43,7 @@ for a in "$@"; do
     esac
     case "$want_value" in
       mode) MODE=$a; MODE_SET=1 ;;
+      implementation-provider) IMPLEMENTATION_PROVIDER=$a; IMPLEMENTATION_PROVIDER_SET=1 ;;
       yolo) YOLO=$a; YOLO_SET=1 ;;
     esac
     want_value=
@@ -46,13 +52,15 @@ for a in "$@"; do
   case "$a" in
     --mode) want_value=mode ;;
     --mode=*) MODE=${a#--mode=}; MODE_SET=1 ;;
+    --implementation-provider) want_value=implementation-provider ;;
+    --implementation-provider=*) IMPLEMENTATION_PROVIDER=${a#--implementation-provider=}; IMPLEMENTATION_PROVIDER_SET=1 ;;
     --yolo) want_value=yolo ;;
     --yolo=*) YOLO=${a#--yolo=}; YOLO_SET=1 ;;
     *) POS+=("$a") ;;
   esac
 done
 [ -z "$want_value" ] || { echo "error: --$want_value requires a value" >&2; exit 1; }
-[ "${#POS[@]}" -ge 1 ] || { echo "usage: fm-promote.sh <task-id> --mode <no-mistakes|direct-PR|local-only> --yolo <on|off>" >&2; exit 1; }
+[ "${#POS[@]}" -ge 1 ] || { echo "usage: fm-promote.sh <task-id> --mode <no-mistakes|direct-PR|local-only> [--implementation-provider <openai|anthropic>] --yolo <on|off>" >&2; exit 1; }
 [ "$MODE_SET" -eq 1 ] || {
   echo "error: promotion requires --mode <no-mistakes|direct-PR|local-only>; decide it now from the scout's findings and the project's registered posture in data/projects.md" >&2
   exit 1
@@ -72,6 +80,19 @@ case "$YOLO" in
   on|off) ;;
   *) echo "error: --yolo must be on or off (got '$YOLO')" >&2; exit 1 ;;
 esac
+if [ "$MODE" = no-mistakes ]; then
+  [ "$IMPLEMENTATION_PROVIDER_SET" -eq 1 ] || {
+    echo "error: no-mistakes promotion requires --implementation-provider <openai|anthropic>; without authoritative provider identity Firstmate cannot prove an independent AI review" >&2
+    exit 1
+  }
+  case "$IMPLEMENTATION_PROVIDER" in
+    openai|anthropic) ;;
+    *) echo "error: --implementation-provider must be openai or anthropic for a no-mistakes review (got '$IMPLEMENTATION_PROVIDER'); Firstmate cannot prove an independent AI review" >&2; exit 1 ;;
+  esac
+elif [ "$IMPLEMENTATION_PROVIDER_SET" -eq 1 ]; then
+  echo "error: --implementation-provider applies only to mode=no-mistakes; $MODE performs no AI review and remains unchanged" >&2
+  exit 1
+fi
 
 ID=${POS[0]}
 fm_task_id_creation_valid "$ID" || { echo "error: invalid task id" >&2; exit 2; }
@@ -109,10 +130,11 @@ META_LOCK_HELD=1
 grep -qx 'kind=scout' "$META" || { echo "error: task $ID is not a scout task (kind=scout not in meta)" >&2; exit 1; }
 
 TMP="$STATE/.$ID.meta.promote.${BASHPID:-$$}"
-grep -v -e '^kind=' -e '^mode=' -e '^yolo=' "$META" > "$TMP"
+grep -v -e '^kind=' -e '^mode=' -e '^implementation_provider=' -e '^yolo=' "$META" > "$TMP"
 {
   echo "kind=ship"
   echo "mode=$MODE"
+  [ -z "$IMPLEMENTATION_PROVIDER" ] || echo "implementation_provider=$IMPLEMENTATION_PROVIDER"
   echo "yolo=$YOLO"
 } >> "$TMP"
 mv "$TMP" "$META"
@@ -121,5 +143,11 @@ fm_lock_release "$META_LOCK"
 META_LOCK_HELD=0
 
 HOME_Q=$(printf '%q' "$FM_HOME")
-echo "promoted $ID to ship mode=$MODE yolo=$YOLO (teardown protection restored)"
-echo "next: FM_HOME=$HOME_Q bin/fm-send.sh fm-$ID '<ship instructions for mode=$MODE: review scratch state with git status and git log; reset to a clean default-branch base; carry over only intended fix changes; create branch fm/$ID; implement; report done>'"
+PROMOTE_PROVIDER_TEXT=
+PROMOTE_VALIDATION_TEXT=
+if [ -n "$IMPLEMENTATION_PROVIDER" ]; then
+  PROMOTE_PROVIDER_TEXT=" implementation-provider=$IMPLEMENTATION_PROVIDER"
+  PROMOTE_VALIDATION_TEXT="; when validation is authorized, start no-mistakes with --implementation-provider $IMPLEMENTATION_PROVIDER and stop if it cannot prove an opposite-provider review"
+fi
+echo "promoted $ID to ship mode=$MODE$PROMOTE_PROVIDER_TEXT yolo=$YOLO (teardown protection restored)"
+echo "next: FM_HOME=$HOME_Q bin/fm-send.sh fm-$ID '<ship instructions for mode=$MODE: review scratch state with git status and git log; reset to a clean default-branch base; carry over only intended fix changes; create branch fm/$ID; implement$PROMOTE_VALIDATION_TEXT; report done>'"

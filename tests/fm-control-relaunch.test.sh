@@ -141,7 +141,7 @@ add_ship_task() {
   local home="$dir/home" proj="$dir/proj" wt="$dir/wt"
   fm_git_worktree "$proj" "$wt" "task-$id"
   mkdir -p "$home/data/$id"
-  printf '# brief for %s\n\nDo the thing.\n' "$id" > "$home/data/$id/brief.md"
+  printf '# brief for %s\n\nDelivery contract: mode=no-mistakes\nValidation contract: implementation-provider=openai\nDo the thing.\n' "$id" > "$home/data/$id/brief.md"
   {
     echo "window=fmses:fm-$id"
     echo "endpoint_task_id=$id"
@@ -150,6 +150,7 @@ add_ship_task() {
     echo "harness=$harness"
     echo "kind=ship"
     echo "mode=no-mistakes"
+    echo "implementation_provider=openai"
     echo "yolo=off"
     echo "tasktmp=/tmp/fm-$id"
     echo "model=default"
