@@ -99,6 +99,8 @@ Switching harness is therefore one ordinary relaunch rather than a separate mech
 - An ambiguous or unreadable endpoint state refuses.
   Only a positively classified state acts.
 - `fm-spawn --relaunch` independently refuses unless the recorded endpoint is positively agent-free and its shell is sitting in the recorded worktree, so a replacement can never join a live agent or start outside the copy holding the work.
+- A `no-mistakes` ship relaunch reuses the task's recorded implementation provider and refuses an overriding `--implementation-provider`, exactly like the delivery mode.
+  Silence on one side is filled from the other - a promoted scout carries the provider only in the task record - while both silent or the record and the brief disagreeing refuses, because a replacement worker that cannot name its implementation provider cannot prove an independent review ([architecture.md](architecture.md#delivery-modes-are-explicit-per-task)).
 
 ## Capability matrix
 
