@@ -40,12 +40,14 @@ make_home() {  # <name> [<registry-line>...]
   printf '%s\n' "$home|$projects/proj|$fakebin"
 }
 
-write_brief() {  # <home> <id> [<recorded-mode>]
-  local home=$1 id=$2 mode=${3:-}
+write_brief() {  # <home> <id> [<recorded-mode>] [<implementation-provider>]
+  local home=$1 id=$2 mode=${3:-} provider=${4:-}
+  [ "$mode" != no-mistakes ] || provider=${provider:-openai}
   mkdir -p "$home/data/$id"
   {
     printf 'You are a crewmate.\n\n# Definition of done\n'
     [ -z "$mode" ] || printf 'Delivery contract: mode=%s\n' "$mode"
+    [ -z "$provider" ] || printf 'Validation contract: implementation-provider=%s\n' "$provider"
   } > "$home/data/$id/brief.md"
 }
 
@@ -79,10 +81,10 @@ EOF
     assert_absent "$home/state/delivery-required-$n.meta" "$label: refused spawn wrote task metadata"
   done <<'ROWS'
 missing both flags||ship spawns require --mode
-missing --yolo|--mode no-mistakes|ship spawns require --yolo
+missing --yolo|--mode no-mistakes --implementation-provider openai|ship spawns require --yolo
 missing --mode|--yolo off|ship spawns require --mode
 unknown mode|--mode nope --yolo off|must be one of no-mistakes, direct-PR, local-only
-unknown yolo|--mode no-mistakes --yolo maybe|--yolo must be on or off
+unknown yolo|--mode no-mistakes --implementation-provider openai --yolo maybe|--yolo must be on or off
 conditional policy as a task mode|--mode no-mistakes-prod-only --yolo off|classify this task's surface
 ROWS
   pass "fm-spawn: a ship spawn requires a valid explicit mode and yolo before anything is created"
@@ -108,7 +110,7 @@ EOF
   [ "$status" -ne 0 ] || fail "a scout spawn carrying --yolo should exit non-zero"
   assert_contains "$out" "--yolo applies only to ship spawns" "scout spawn did not refuse --yolo"
 
-  out=$(run_spawn "$home" "$fakebin" delivery-sm-a2 "$home" --secondmate --mode no-mistakes --yolo off)
+  out=$(run_spawn "$home" "$fakebin" delivery-sm-a2 "$home" --secondmate --mode no-mistakes --implementation-provider openai --yolo off)
   status=$?
   [ "$status" -ne 0 ] || fail "a secondmate spawn carrying delivery flags should exit non-zero"
   assert_contains "$out" "applies only to ship spawns" "secondmate spawn did not refuse the delivery flags"
@@ -146,6 +148,64 @@ EOF
   pass "fm-spawn: the brief's recorded mode and the spawn's explicit mode must agree"
 }
 
+# A no-mistakes spawn records and agrees on the structurally established
+# implementation provider before any worker exists. The owning no-mistakes run
+# then performs and verifies the opposite-provider selection.
+test_spawn_requires_provider_identity_for_independent_review() {
+  local rec home proj fakebin out status
+  rec=$(make_home provider-agreement)
+  IFS='|' read -r home proj fakebin <<EOF
+$rec
+EOF
+
+  write_brief "$home" provider-openai-c1 no-mistakes openai
+  out=$(run_spawn "$home" "$fakebin" provider-openai-c1 "$proj" claude \
+    --mode no-mistakes --implementation-provider openai --yolo off)
+  assert_not_contains "$out" "validation mismatch" \
+    "agreeing OpenAI implementation provider was reported as a mismatch"
+  assert_not_contains "$out" "cannot prove an independent AI review" \
+    "agreeing OpenAI implementation provider was refused"
+
+  write_brief "$home" provider-anthropic-c2 no-mistakes anthropic
+  out=$(run_spawn "$home" "$fakebin" provider-anthropic-c2 "$proj" claude \
+    --mode no-mistakes --implementation-provider anthropic --yolo off)
+  assert_not_contains "$out" "validation mismatch" \
+    "agreeing Anthropic implementation provider was reported as a mismatch"
+
+  write_brief "$home" provider-missing-c3 no-mistakes openai
+  out=$(run_spawn "$home" "$fakebin" provider-missing-c3 "$proj" claude \
+    --mode no-mistakes --yolo off)
+  status=$?
+  [ "$status" -ne 0 ] || fail "missing implementation provider should stop spawn"
+  assert_contains "$out" "cannot prove an independent AI review" \
+    "missing provider refusal did not explain the independence consequence"
+
+  write_brief "$home" provider-unknown-c4 no-mistakes openai
+  out=$(run_spawn "$home" "$fakebin" provider-unknown-c4 "$proj" claude \
+    --mode no-mistakes --implementation-provider unknown --yolo off)
+  status=$?
+  [ "$status" -ne 0 ] || fail "unknown implementation provider should stop spawn"
+  assert_contains "$out" "must be openai or anthropic" \
+    "unknown provider refusal did not name the supported structural families"
+
+  write_brief "$home" provider-mismatch-c5 no-mistakes openai
+  out=$(run_spawn "$home" "$fakebin" provider-mismatch-c5 "$proj" claude \
+    --mode no-mistakes --implementation-provider anthropic --yolo off)
+  status=$?
+  [ "$status" -ne 0 ] || fail "brief/spawn provider mismatch should stop spawn"
+  assert_contains "$out" "validation mismatch for provider-mismatch-c5" \
+    "provider mismatch refusal did not name the task"
+
+  write_brief "$home" provider-direct-c6 direct-PR
+  out=$(run_spawn "$home" "$fakebin" provider-direct-c6 "$proj" claude \
+    --mode direct-PR --implementation-provider openai --yolo off)
+  status=$?
+  [ "$status" -ne 0 ] || fail "review-less direct path should refuse a provider contract"
+  assert_contains "$out" "direct-PR performs no AI review and remains unchanged" \
+    "review-less direct path did not stay unchanged"
+  pass "fm-spawn: both provider families agree durably while unknown, mismatched, and review-less contracts stop"
+}
+
 # The registry is the captain's standing posture, so dropping below its rigor is
 # allowed but never silent, while matching or exceeding it stays quiet. An
 # unregistered project resolves to the same no-mistakes standing default
@@ -161,7 +221,11 @@ test_spawn_notices_a_rigor_downgrade_against_the_registry() {
 $rec
 EOF
     write_brief "$home" "delivery-dev-$n" "$mode"
-    out=$(run_spawn "$home" "$fakebin" "delivery-dev-$n" "$proj" claude --mode "$mode" --yolo off)
+    if [ "$mode" = no-mistakes ]; then
+      out=$(run_spawn "$home" "$fakebin" "delivery-dev-$n" "$proj" claude --mode "$mode" --implementation-provider openai --yolo off)
+    else
+      out=$(run_spawn "$home" "$fakebin" "delivery-dev-$n" "$proj" claude --mode "$mode" --yolo off)
+    fi
     case "$expect" in
       notice)
         assert_contains "$out" "less rigor than the captain's standing posture" \
@@ -227,6 +291,26 @@ test_promote_requires_and_records_the_delivery_contract() {
   [ "$status" -ne 0 ] || fail "promotion on a conditional policy should exit non-zero"
   assert_contains "$out" "classify this task's surface" "promote did not refuse the conditional policy as a task mode"
 
+  out=$(FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" "$PROMOTE" promote-d1 --mode no-mistakes --yolo off 2>&1)
+  status=$?
+  [ "$status" -ne 0 ] || fail "no-mistakes promotion without provider should exit non-zero"
+  assert_contains "$out" "cannot prove an independent AI review" \
+    "promotion without provider did not explain why independent review is unproved"
+
+  out=$(FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" "$PROMOTE" promote-d1 \
+    --mode no-mistakes --implementation-provider unknown --yolo off 2>&1)
+  status=$?
+  [ "$status" -ne 0 ] || fail "no-mistakes promotion with unknown provider should exit non-zero"
+  assert_contains "$out" "must be openai or anthropic" \
+    "promotion accepted an unknown implementation provider"
+
+  out=$(FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" "$PROMOTE" promote-d1 \
+    --mode direct-PR --implementation-provider openai --yolo on 2>&1)
+  status=$?
+  [ "$status" -ne 0 ] || fail "direct-PR promotion with a review provider should exit non-zero"
+  assert_contains "$out" "direct-PR performs no AI review and remains unchanged" \
+    "promotion changed a review-less direct path"
+
   out=$(FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" "$PROMOTE" promote-d1 --mode direct-PR --yolo on 2>&1)
   status=$?
   expect_code 0 "$status" "a promotion carrying both flags should succeed"
@@ -235,7 +319,19 @@ test_promote_requires_and_records_the_delivery_contract() {
   assert_grep 'yolo=on' "$meta" "promotion did not record the decided approval posture"
   assert_contains "$out" "ship instructions for mode=direct-PR" "promotion hint did not carry the decided mode"
   [ "$(grep -c '^mode=' "$meta")" = 1 ] || fail "promotion left more than one mode= line in the task record"
-  pass "fm-promote: promotion requires the delivery contract and records it exactly once"
+  assert_no_grep '^implementation_provider=' "$meta" \
+    "review-less promotion recorded an implementation provider"
+
+  write_scout_meta
+  out=$(FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" "$PROMOTE" promote-d1 \
+    --mode no-mistakes --implementation-provider anthropic --yolo off 2>&1)
+  status=$?
+  expect_code 0 "$status" "a no-mistakes promotion carrying provider identity should succeed"
+  assert_grep 'implementation_provider=anthropic' "$meta" \
+    "no-mistakes promotion did not record provider identity"
+  assert_contains "$out" "--implementation-provider anthropic" \
+    "promotion instructions did not pass provider identity to no-mistakes"
+  pass "fm-promote: promotion requires the delivery and provider contracts and records them exactly once"
 }
 
 # The registry parser survives for the mechanical consumers only. It accepts the
@@ -275,6 +371,7 @@ EOF
 test_ship_spawn_requires_a_valid_delivery_contract
 test_scout_and_secondmate_refuse_delivery_flags
 test_spawn_refuses_a_brief_mode_mismatch
+test_spawn_requires_provider_identity_for_independent_review
 test_spawn_notices_a_rigor_downgrade_against_the_registry
 test_scout_records_no_delivery_posture
 test_promote_requires_and_records_the_delivery_contract

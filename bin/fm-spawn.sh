@@ -1,17 +1,25 @@
 #!/usr/bin/env bash
 # Spawn a direct report: a crewmate in a treehouse or Orca worktree, or a
 # secondmate in its isolated firstmate home.
-# Usage: fm-spawn.sh <task-id> <project-dir> --mode <no-mistakes|direct-PR|local-only> --yolo <on|off> [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>]
+# Usage: fm-spawn.sh <task-id> <project-dir> --mode no-mistakes --implementation-provider <openai|anthropic> --yolo <on|off> [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>]
+#        fm-spawn.sh <task-id> <project-dir> --mode <direct-PR|local-only> --yolo <on|off> [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>]
 #        fm-spawn.sh <task-id> <project-dir> --scout [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>]
 #        fm-spawn.sh <task-id> [<firstmate-home>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] --secondmate
 #   --mode and --yolo are this task's delivery contract, REQUIRED for every ship
 #   spawn and refused on --scout and --secondmate spawns. Firstmate resolves both
 #   per task at intake (AGENTS.md section 7); data/projects.md holds the captain's
 #   standing posture as context, not as this task's answer, so a spawn never looks
-#   the mode up. A ship spawn additionally reads the brief's recorded
-#   "Delivery contract: mode=<mode>" line and REFUSES a mismatch, so the worker's
-#   instructions and the recorded task delivery cannot drift apart; a brief
-#   scaffolded before that line existed warns once and launches on the flag. When
+#   the mode up. A no-mistakes spawn also requires --implementation-provider,
+#   established from the selected worker model's authoritative catalog, while
+#   review-less modes refuse it. A ship spawn reads the brief's recorded delivery
+#   contract and, for no-mistakes, validation contract, then REFUSES a mismatch so
+#   the worker's instructions and recorded task delivery cannot drift apart. A
+#   brief scaffolded before the delivery line existed warns once, and a fresh
+#   no-mistakes spawn whose brief carries no provider identity is refused because
+#   independent review cannot be proved; a relaunch instead takes the provenance
+#   from whichever of the task record and the brief holds it (a promoted scout
+#   keeps it only in the record) and is refused only when both are silent or the
+#   two disagree. When
 #   the explicit mode carries less rigor than the project's standing posture, a
 #   loud one-line deviation notice is printed and the spawn continues.
 #   no-mistakes-prod-only is a registry policy rather than a task mode and is
@@ -133,7 +141,7 @@
 # Batch dispatch: pass one or more `id=repo` pairs instead of a single <id> <project>, e.g.
 #     fm-spawn.sh fix-a-k3=projects/foo add-b-q7=projects/bar [--scout]
 #   Each pair re-execs this script in single-task mode, so the single path stays the only
-#   source of truth; shared --scout/--harness/--model/--effort/--backend/--mode/--yolo
+#   source of truth; shared --scout/--harness/--model/--effort/--backend/--mode/--implementation-provider/--yolo
 #   applies to every pair. A ship batch therefore carries one delivery contract, and each
 #   pair still checks it against its own brief; a batch spanning modes is two invocations.
 #   If config/crew-dispatch.json exists, shared --harness is required for crewmate
@@ -250,6 +258,7 @@ MODEL=
 EFFORT=
 BACKEND_ARG=
 MODE=
+IMPLEMENTATION_PROVIDER=
 YOLO=
 TRACEPARENT_ARG=
 HARNESS_SET=0
@@ -257,6 +266,7 @@ MODEL_SET=0
 EFFORT_SET=0
 BACKEND_SET=0
 MODE_SET=0
+IMPLEMENTATION_PROVIDER_SET=0
 YOLO_SET=0
 TRACEPARENT_SET=0
 RELAUNCH=0
@@ -273,6 +283,7 @@ for a in "$@"; do
       effort) EFFORT=$a; EFFORT_SET=1 ;;
       backend) BACKEND_ARG=$a; BACKEND_SET=1 ;;
       mode) MODE=$a; MODE_SET=1 ;;
+      implementation-provider) IMPLEMENTATION_PROVIDER=$a; IMPLEMENTATION_PROVIDER_SET=1 ;;
       yolo) YOLO=$a; YOLO_SET=1 ;;
       traceparent) TRACEPARENT_ARG=$a; TRACEPARENT_SET=1 ;;
       *) echo "error: internal parser state for --$want_value" >&2; exit 1 ;;
@@ -294,6 +305,8 @@ for a in "$@"; do
     --backend=*) BACKEND_ARG=${a#--backend=}; BACKEND_SET=1 ;;
     --mode) want_value=mode ;;
     --mode=*) MODE=${a#--mode=}; MODE_SET=1 ;;
+    --implementation-provider) want_value=implementation-provider ;;
+    --implementation-provider=*) IMPLEMENTATION_PROVIDER=${a#--implementation-provider=}; IMPLEMENTATION_PROVIDER_SET=1 ;;
     --yolo) want_value=yolo ;;
     --yolo=*) YOLO=${a#--yolo=}; YOLO_SET=1 ;;
     --traceparent) want_value=traceparent ;;
@@ -307,6 +320,7 @@ done
 [ "$EFFORT_SET" -eq 0 ] || [ -n "$EFFORT" ] || { echo "error: --effort requires a non-empty value" >&2; exit 1; }
 [ "$BACKEND_SET" -eq 0 ] || [ -n "$BACKEND_ARG" ] || { echo "error: --backend requires a non-empty value" >&2; exit 1; }
 [ "$MODE_SET" -eq 0 ] || [ -n "$MODE" ] || { echo "error: --mode requires a non-empty value" >&2; exit 1; }
+[ "$IMPLEMENTATION_PROVIDER_SET" -eq 0 ] || [ -n "$IMPLEMENTATION_PROVIDER" ] || { echo "error: --implementation-provider requires a non-empty value" >&2; exit 1; }
 [ "$YOLO_SET" -eq 0 ] || [ -n "$YOLO" ] || { echo "error: --yolo requires a non-empty value" >&2; exit 1; }
 [ "$TRACEPARENT_SET" -eq 0 ] || [ -n "$TRACEPARENT_ARG" ] || { echo "error: --traceparent requires a non-empty value" >&2; exit 1; }
 # A parent-delivered carrier replaces this home's own resolution, so it is
@@ -335,6 +349,7 @@ if [ "$RELAUNCH" -eq 1 ]; then
   [ "$BACKEND_SET" -eq 0 ] || { echo "error: --relaunch reuses the task's recorded backend; --backend cannot override it" >&2; exit 1; }
   [ "$KIND_SET" -eq 0 ] || { echo "error: --relaunch reuses the task's recorded kind; --scout/--secondmate cannot override it" >&2; exit 1; }
   [ "$MODE_SET" -eq 0 ] || { echo "error: --relaunch reuses the task's recorded delivery mode; --mode cannot override it" >&2; exit 1; }
+  [ "$IMPLEMENTATION_PROVIDER_SET" -eq 0 ] || { echo "error: --relaunch reuses the task's recorded implementation provider; --implementation-provider cannot override it" >&2; exit 1; }
   [ "$YOLO_SET" -eq 0 ] || { echo "error: --relaunch reuses the task's recorded yolo posture; --yolo cannot override it" >&2; exit 1; }
 else
   # Delivery contract (AGENTS.md section 7). A ship task's mode and yolo are
@@ -361,6 +376,19 @@ else
       on|off) ;;
       *) echo "error: --yolo must be on or off (got '$YOLO')" >&2; exit 1 ;;
     esac
+    if [ "$MODE" = no-mistakes ]; then
+      [ "$IMPLEMENTATION_PROVIDER_SET" -eq 1 ] || {
+        echo "error: no-mistakes spawns require --implementation-provider <openai|anthropic>; without authoritative provider identity Firstmate cannot prove an independent AI review" >&2
+        exit 1
+      }
+      case "$IMPLEMENTATION_PROVIDER" in
+        openai|anthropic) ;;
+        *) echo "error: --implementation-provider must be openai or anthropic for a no-mistakes review (got '$IMPLEMENTATION_PROVIDER'); Firstmate cannot prove an independent AI review" >&2; exit 1 ;;
+      esac
+    elif [ "$IMPLEMENTATION_PROVIDER_SET" -eq 1 ]; then
+      echo "error: --implementation-provider applies only to mode=no-mistakes; $MODE performs no AI review and remains unchanged" >&2
+      exit 1
+    fi
   else
     [ "$MODE_SET" -eq 0 ] || {
       echo "error: --mode applies only to ship spawns; a scout delivers a report and a secondmate records its own fixed posture" >&2
@@ -368,6 +396,10 @@ else
     }
     [ "$YOLO_SET" -eq 0 ] || {
       echo "error: --yolo applies only to ship spawns; a scout delivers a report and a secondmate records its own fixed posture" >&2
+      exit 1
+    }
+    [ "$IMPLEMENTATION_PROVIDER_SET" -eq 0 ] || {
+      echo "error: --implementation-provider applies only to no-mistakes ship spawns; scouts and secondmates do not perform this AI review" >&2
       exit 1
     }
   fi
@@ -727,6 +759,7 @@ spawn_abort_cleanup() {
             echo "harness=$HARNESS"
             echo "kind=$KIND"
             [ -z "${MODE:-}" ] || echo "mode=$MODE"
+            [ -z "${IMPLEMENTATION_PROVIDER:-}" ] || echo "implementation_provider=$IMPLEMENTATION_PROVIDER"
             [ -z "${YOLO:-}" ] || echo "yolo=$YOLO"
             echo "tasktmp=${TASK_TMP:-}"
             echo "model=${MODEL:-default}"
@@ -844,6 +877,7 @@ if [ "${#POS[@]}" -gt 0 ] && [ "${POS[0]}" != "$idpart" ] && case "$idpart" in *
   # harness. Each pair still re-validates it against its own brief, so a batch
   # spanning several modes is two invocations rather than a silent mixed dispatch.
   [ "$MODE_SET" -eq 0 ] || shared_args+=(--mode "$MODE")
+  [ "$IMPLEMENTATION_PROVIDER_SET" -eq 0 ] || shared_args+=(--implementation-provider "$IMPLEMENTATION_PROVIDER")
   [ "$YOLO_SET" -eq 0 ] || shared_args+=(--yolo "$YOLO")
   for pair in "${POS[@]}"; do
     case "$pair" in
@@ -988,6 +1022,7 @@ if [ "$RELAUNCH" -eq 1 ]; then
   KIND=$(fm_meta_get "$RELAUNCH_META" kind)
   [ -n "$KIND" ] || KIND=ship
   MODE=$(fm_meta_get "$RELAUNCH_META" mode)
+  IMPLEMENTATION_PROVIDER=$(fm_meta_get "$RELAUNCH_META" implementation_provider)
   YOLO=$(fm_meta_get "$RELAUNCH_META" yolo)
   RELAUNCH_WT=$(fm_meta_get "$RELAUNCH_META" worktree)
   [ -n "$RELAUNCH_WT" ] && [ -d "$RELAUNCH_WT" ] || {
@@ -1579,10 +1614,44 @@ delivery_rigor_rank() {  # <mode> -> 3 (most rigor) .. 1 (least); 0 = not a task
 if [ "$KIND" = ship ]; then
   PROJ_NAME=$(basename "$PROJ_ABS")
   BRIEF_MODE=$(sed -n 's/^Delivery contract: mode=\([^ ]*\).*$/\1/p' "$BRIEF" | head -n 1)
+  BRIEF_IMPLEMENTATION_PROVIDER=$(sed -n 's/^Validation contract: implementation-provider=\([^ ]*\).*$/\1/p' "$BRIEF" | head -n 1)
   if [ -z "$BRIEF_MODE" ]; then
     echo "warning: $BRIEF records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode $MODE - confirm its definition of done matches" >&2
   elif [ "$BRIEF_MODE" != "$MODE" ]; then
     echo "error: delivery mismatch for $ID: the brief says mode=$BRIEF_MODE but this spawn passed --mode $MODE; correct the flag or re-scaffold the brief so the worker's instructions and the task record agree" >&2
+    exit 1
+  fi
+  if [ "$MODE" = no-mistakes ]; then
+    # A relaunch carries no flags: the provider provenance is whichever of the
+    # task record and the brief holds it. A promoted scout has it only in the
+    # record (fm-promote.sh writes it and never rewrites the scout brief), and a
+    # task predating this contract has it in neither until the validation
+    # contract line is added to its brief, which is the supported recovery
+    # (fm-brief.sh scaffolds a new brief and never rewrites an existing one).
+    # Silence on one side is filled from the other; disagreement between them is
+    # still a refusal.
+    if [ "$RELAUNCH" -eq 1 ] && [ -z "$IMPLEMENTATION_PROVIDER" ]; then
+      IMPLEMENTATION_PROVIDER=$BRIEF_IMPLEMENTATION_PROVIDER
+    fi
+    if [ "$RELAUNCH" -eq 1 ] && [ -n "$IMPLEMENTATION_PROVIDER" ]; then
+      case "$IMPLEMENTATION_PROVIDER" in
+        openai|anthropic) ;;
+        *) echo "error: $ID records implementation-provider=$IMPLEMENTATION_PROVIDER, which is neither openai nor anthropic; Firstmate cannot prove an independent AI review" >&2; exit 1 ;;
+      esac
+    fi
+    if [ -z "$BRIEF_IMPLEMENTATION_PROVIDER" ]; then
+      if [ "$RELAUNCH" -eq 1 ] && [ -n "$IMPLEMENTATION_PROVIDER" ]; then
+        echo "warning: $BRIEF records no implementation provider (promoted from a scout, or scaffolded before no-mistakes briefs recorded one); relaunching on the task's recorded implementation-provider=$IMPLEMENTATION_PROVIDER - the replacement must start no-mistakes with that provider" >&2
+      else
+        echo "error: $BRIEF records no implementation provider; without authoritative provider identity Firstmate cannot prove an independent AI review; add the line 'Validation contract: implementation-provider=<openai|anthropic>' to that brief's '# Definition of done', beneath its delivery contract line" >&2
+        exit 1
+      fi
+    elif [ "$BRIEF_IMPLEMENTATION_PROVIDER" != "$IMPLEMENTATION_PROVIDER" ]; then
+      echo "error: validation mismatch for $ID: the brief says implementation-provider=$BRIEF_IMPLEMENTATION_PROVIDER but this task carries implementation-provider=$IMPLEMENTATION_PROVIDER; correct the flag, or correct the brief's 'Validation contract: implementation-provider=' line, so the worker's instructions and the task record agree" >&2
+      exit 1
+    fi
+  elif [ -n "$BRIEF_IMPLEMENTATION_PROVIDER" ]; then
+    echo "error: $BRIEF records an implementation provider but mode=$MODE performs no AI review; remove the validation contract so the review-less path remains unchanged" >&2
     exit 1
   fi
   # The registry holds the captain's standing posture, so dropping below it is
@@ -2476,7 +2545,7 @@ fi
 preserve_relaunch_meta() {
   awk -F= '
     BEGIN {
-      split("window endpoint_task_id worktree project harness kind mode yolo tasktmp model effort busy_gen traceparent backend herdr_session herdr_workspace_id herdr_tab_id herdr_pane_id zellij_session zellij_tab_id zellij_pane_id orca_worktree_id terminal cmux_workspace_id cmux_surface_id home projects control_relaunch_tx", keys, " ")
+      split("window endpoint_task_id worktree project harness kind mode implementation_provider yolo tasktmp model effort busy_gen traceparent backend herdr_session herdr_workspace_id herdr_tab_id herdr_pane_id zellij_session zellij_tab_id zellij_pane_id orca_worktree_id terminal cmux_workspace_id cmux_surface_id home projects control_relaunch_tx", keys, " ")
       for (i in keys) owned[keys[i]] = 1
     }
     !($1 in owned)
@@ -2490,6 +2559,7 @@ preserve_relaunch_meta() {
   echo "harness=$HARNESS"
   echo "kind=$KIND"
   [ -z "$MODE" ] || echo "mode=$MODE"
+  [ -z "$IMPLEMENTATION_PROVIDER" ] || echo "implementation_provider=$IMPLEMENTATION_PROVIDER"
   [ -z "$YOLO" ] || echo "yolo=$YOLO"
   echo "tasktmp=$TASK_TMP"
   echo "model=${MODEL:-default}"

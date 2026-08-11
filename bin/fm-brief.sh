@@ -6,7 +6,8 @@
 # description, acceptance criteria, and context, and may adjust other sections
 # when the task genuinely deviates (e.g. working an existing external PR instead
 # of shipping a new one).
-# Usage: fm-brief.sh <task-id> <repo-name> --mode <no-mistakes|direct-PR|local-only> [--herdr-lab]
+# Usage: fm-brief.sh <task-id> <repo-name> --mode no-mistakes --implementation-provider <openai|anthropic> [--herdr-lab]
+#        fm-brief.sh <task-id> <repo-name> --mode <direct-PR|local-only> [--herdr-lab]
 #        fm-brief.sh <task-id> <repo-name> --scout [--herdr-lab]
 #        fm-brief.sh <task-id> --secondmate {<project>...|--no-projects}
 #   --scout writes the scout contract instead: the deliverable is a report at
@@ -31,15 +32,17 @@
 # resolves it per task at intake (AGENTS.md section 7); data/projects.md holds the
 # captain's standing posture as context, and this script never reads it:
 #   no-mistakes  implement -> /no-mistakes pipeline -> PR -> configured merge authority
+#                requires --implementation-provider from the selected worker's authoritative model catalog
 #   direct-PR    implement -> push + open PR via gh-axi (no pipeline) -> configured merge authority
 #   local-only   implement on branch, stop and report "ready in branch" (no push/PR);
 #                the configured merge authority approves, firstmate merges to local main
 # no-mistakes-prod-only is a registry policy, not a task mode; resolve it to one of
 # the three concrete modes at intake before calling this script.
 # The generated ship brief records the chosen mode as a fixed machine-readable
-# "Delivery contract: mode=<mode>" line. bin/fm-spawn.sh reads that line and refuses
-# to launch a ship task whose explicit --mode disagrees, so an adjusted brief and the
-# recorded task metadata cannot drift apart.
+# "Delivery contract: mode=<mode>" line. A no-mistakes brief also records the fixed
+# "Validation contract: implementation-provider=<provider>" line. bin/fm-spawn.sh
+# reads both lines and refuses a launch whose explicit inputs disagree, so the worker
+# instructions and recorded task metadata cannot drift apart.
 # Ship briefs begin with a worktree-isolation assertion before the branch step.
 # --mode is refused on scout and secondmate scaffolds: a scout's deliverable is a
 # report rather than a merge, and a charter is not a delivery contract.
@@ -105,7 +108,9 @@ KIND=ship
 HERDR_LAB=0
 NO_PROJECTS=0
 MODE=
+IMPLEMENTATION_PROVIDER=
 MODE_SET=0
+IMPLEMENTATION_PROVIDER_SET=0
 POS=()
 want_value=
 for a in "$@"; do
@@ -115,6 +120,7 @@ for a in "$@"; do
     esac
     case "$want_value" in
       mode) MODE=$a; MODE_SET=1 ;;
+      implementation-provider) IMPLEMENTATION_PROVIDER=$a; IMPLEMENTATION_PROVIDER_SET=1 ;;
       *) echo "error: internal parser state for --$want_value" >&2; exit 1 ;;
     esac
     want_value=
@@ -127,6 +133,8 @@ for a in "$@"; do
     --no-projects) NO_PROJECTS=1 ;;
     --mode) want_value=mode ;;
     --mode=*) MODE=${a#--mode=}; MODE_SET=1 ;;
+    --implementation-provider) want_value=implementation-provider ;;
+    --implementation-provider=*) IMPLEMENTATION_PROVIDER=${a#--implementation-provider=}; IMPLEMENTATION_PROVIDER_SET=1 ;;
     # yolo never reaches the worker: it is firstmate's approval authority, not a
     # brief input. Refuse it loudly so it is never silently dropped here and then
     # believed to have been recorded.
@@ -150,8 +158,24 @@ if [ "$KIND" = ship ]; then
       exit 1 ;;
     *) echo "error: --mode must be one of no-mistakes, direct-PR, local-only (got '$MODE')" >&2; exit 1 ;;
   esac
+  if [ "$MODE" = no-mistakes ]; then
+    [ "$IMPLEMENTATION_PROVIDER_SET" -eq 1 ] || {
+      echo "error: no-mistakes briefs require --implementation-provider <openai|anthropic>; without authoritative provider identity Firstmate cannot prove an independent AI review" >&2
+      exit 1
+    }
+    case "$IMPLEMENTATION_PROVIDER" in
+      openai|anthropic) ;;
+      *) echo "error: --implementation-provider must be openai or anthropic for a no-mistakes review (got '$IMPLEMENTATION_PROVIDER'); Firstmate cannot prove an independent AI review" >&2; exit 1 ;;
+    esac
+  elif [ "$IMPLEMENTATION_PROVIDER_SET" -eq 1 ]; then
+    echo "error: --implementation-provider applies only to mode=no-mistakes; $MODE performs no AI review and remains unchanged" >&2
+    exit 1
+  fi
 elif [ "$MODE_SET" -eq 1 ]; then
   echo "error: --mode applies only to ship briefs; a scout delivers a report and a secondmate charter is not a delivery contract" >&2
+  exit 1
+elif [ "$IMPLEMENTATION_PROVIDER_SET" -eq 1 ]; then
+  echo "error: --implementation-provider applies only to no-mistakes ship briefs; scouts and secondmate charters do not perform this AI review" >&2
   exit 1
 fi
 ID=${POS[0]}
@@ -384,12 +408,16 @@ EOF
     IFS= read -r -d '' DOD <<EOF || true
 # Definition of done
 Delivery contract: mode=no-mistakes
+Validation contract: implementation-provider=$IMPLEMENTATION_PROVIDER
 The task is complete only when committed on your branch.
 When you believe it is complete, append \`done: {summary}\` to the status file and stop.
 Firstmate will then instruct you to run /no-mistakes to validate and ship a PR.
 
 You drive no-mistakes by responding to its gates, not by implementing fixes.
 Follow the guidance no-mistakes itself provides for the mechanics: it loads when you invoke /no-mistakes, and \`no-mistakes axi run --help\` plus the \`help\` lines in each \`axi\` response are authoritative and version-matched to the installed binary.
+Before starting, confirm that \`no-mistakes axi run --help\` exposes \`--implementation-provider\`.
+Start the run with \`--implementation-provider $IMPLEMENTATION_PROVIDER\`; no-mistakes owns opposite-provider reviewer selection, authentication and model-support checks, observed reviewer verification, and durable independent-review evidence.
+If that interface is unavailable, the provider conflicts with existing run evidence, or no-mistakes cannot obtain and verify a supported authenticated reviewer from the opposite provider family, append \`blocked: independent AI review could not be proven: {exact reason}\` and stop rather than starting or claiming an independent review.
 When starting no-mistakes, make \`--intent\` preserve all relevant content from this brief's \`# Task\` section plus every later accepted Firstmate requirement, clarification, constraint, exclusion, and supersession, carrying only each requirement's current accepted form; retain direct requirements instead of substituting a diff summary, and exclude generic operational, status, delivery, and other scaffold boilerplate unless it is task-specific.
 Do not hand-edit, commit, or fix findings yourself while a run is active - the pipeline applies every fix.
 
