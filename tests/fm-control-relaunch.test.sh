@@ -1248,6 +1248,85 @@ test_promotion_participates_in_the_lifecycle_lock_before_metadata_resolution() {
   pass "fm-promote: promotion participates in lifecycle serialization"
 }
 
+# A relaunch passes no flags, so a no-mistakes task's provider provenance is
+# whichever of its record and its brief holds it. A promoted scout holds it only
+# in the record - fm-promote decides it and never rewrites the scout brief - so a
+# replacement agent must still be launchable, on that recorded identity.
+test_relaunch_of_a_promoted_scout_uses_the_recorded_provider_identity() {
+  local dir out rc meta
+  dir=$(new_case promoteprovider rl35)
+  add_ship_task "$dir" rl35 claude
+  meta="$dir/home/state/rl35.meta"
+  printf '# scout brief for rl35\n\nInvestigate the thing.\n' > "$dir/home/data/rl35/brief.md"
+  sed -e 's/^kind=ship$/kind=scout/' -e '/^mode=/d' -e '/^implementation_provider=/d' \
+    -e '/^yolo=/d' "$meta" > "$meta.scout"
+  mv "$meta.scout" "$meta"
+
+  out=$(FM_HOME="$dir/home" "$PROMOTE" rl35 --mode no-mistakes --implementation-provider anthropic --yolo off 2>&1)
+  rc=$?
+  expect_code 0 "$rc" "promoting a scout to no-mistakes should succeed"$'\n'"$out"
+
+  printf 'zsh' > "$dir/fake/command"
+  out=$(run_spawn "$dir" rl35 --relaunch --harness claude); rc=$?
+  expect_code 0 "$rc" "relaunching a promoted scout should succeed"$'\n'"$out"
+  assert_contains "$out" "records no implementation provider" \
+    "the relaunch should say the scout brief carries no provider identity"
+  assert_contains "$out" "implementation-provider=anthropic" \
+    "the relaunch should name the recorded provider identity it launched on"
+  [ "$(meta_field "$dir" rl35 implementation_provider)" = anthropic ] \
+    || fail "the promoted provider identity must survive the relaunch, got '$(meta_field "$dir" rl35 implementation_provider)'"
+  pass "fm-spawn --relaunch: a promoted scout relaunches on its recorded provider identity"
+}
+
+# A no-mistakes task recorded before this contract existed has provider identity
+# on neither side. That cannot prove an independent review, so the relaunch stops
+# - and re-scaffolding the brief, which the refusal names, is a real recovery
+# rather than a dead end.
+test_relaunch_without_provider_provenance_refuses_until_the_brief_records_it() {
+  local dir out rc meta
+  dir=$(new_case preprovider rl36)
+  add_ship_task "$dir" rl36 claude
+  meta="$dir/home/state/rl36.meta"
+  printf '# brief for rl36\n\nDelivery contract: mode=no-mistakes\nDo the thing.\n' \
+    > "$dir/home/data/rl36/brief.md"
+  grep -v '^implementation_provider=' "$meta" > "$meta.pre"
+  mv "$meta.pre" "$meta"
+
+  printf 'zsh' > "$dir/fake/command"
+  out=$(run_spawn "$dir" rl36 --relaunch --harness claude); rc=$?
+  expect_code 1 "$rc" "a relaunch with no provider provenance anywhere should refuse"
+  assert_contains "$out" "cannot prove an independent AI review" \
+    "the refusal should name the exact inability to prove independence"
+  assert_contains "$out" "fm-brief.sh rl36" "the refusal should name the recovery"
+  [ -z "$(cat "$dir/fake/literal")" ] || fail "a refused relaunch must deliver no launch bytes"
+
+  printf '# brief for rl36\n\nDelivery contract: mode=no-mistakes\nValidation contract: implementation-provider=openai\nDo the thing.\n' \
+    > "$dir/home/data/rl36/brief.md"
+  out=$(run_spawn "$dir" rl36 --relaunch --harness claude); rc=$?
+  expect_code 0 "$rc" "a re-scaffolded brief should let the relaunch proceed"$'\n'"$out"
+  [ "$(meta_field "$dir" rl36 implementation_provider)" = openai ] \
+    || fail "the re-scaffolded provider identity must be recorded on the task, got '$(meta_field "$dir" rl36 implementation_provider)'"
+  pass "fm-spawn --relaunch: missing provider provenance stops, and re-scaffolding the brief recovers it"
+}
+
+# Provenance that disagrees between the record and the brief is never resolved by
+# preferring one side: a relaunch stops on the conflict.
+test_relaunch_refuses_conflicting_provider_provenance() {
+  local dir out rc
+  dir=$(new_case conflictprovider rl37)
+  add_ship_task "$dir" rl37 claude
+  printf '# brief for rl37\n\nDelivery contract: mode=no-mistakes\nValidation contract: implementation-provider=anthropic\nDo the thing.\n' \
+    > "$dir/home/data/rl37/brief.md"
+  printf 'zsh' > "$dir/fake/command"
+  out=$(run_spawn "$dir" rl37 --relaunch --harness claude); rc=$?
+  expect_code 1 "$rc" "conflicting provider provenance should refuse"
+  assert_contains "$out" "validation mismatch for rl37" "the refusal should name the conflicting task"
+  [ -z "$(cat "$dir/fake/literal")" ] || fail "a refused relaunch must deliver no launch bytes"
+  [ "$(meta_field "$dir" rl37 implementation_provider)" = openai ] \
+    || fail "a refused relaunch must leave the recorded provider identity untouched"
+  pass "fm-spawn --relaunch: conflicting provider provenance stops instead of picking a side"
+}
+
 # --- 6. fm-spawn --relaunch's own refusals -----------------------------------
 
 test_spawn_relaunch_refuses_a_live_agent() {
@@ -1341,6 +1420,9 @@ test_secondmate_checkpoint_refuses_unreadable_child_state
 test_concurrent_relaunch_is_refused
 test_direct_spawn_relaunch_participates_in_the_lifecycle_lock
 test_promotion_participates_in_the_lifecycle_lock_before_metadata_resolution
+test_relaunch_of_a_promoted_scout_uses_the_recorded_provider_identity
+test_relaunch_without_provider_provenance_refuses_until_the_brief_records_it
+test_relaunch_refuses_conflicting_provider_provenance
 test_spawn_relaunch_refuses_a_live_agent
 test_spawn_relaunch_refuses_contradicting_flags
 test_spawn_relaunch_refuses_an_unrecorded_task

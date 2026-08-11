@@ -14,9 +14,12 @@
 #   review-less modes refuse it. A ship spawn reads the brief's recorded delivery
 #   contract and, for no-mistakes, validation contract, then REFUSES a mismatch so
 #   the worker's instructions and recorded task delivery cannot drift apart. A
-#   brief scaffolded before the delivery line existed warns once, but a no-mistakes
-#   brief without provider identity is refused because independent review cannot
-#   be proved. When
+#   brief scaffolded before the delivery line existed warns once, and a fresh
+#   no-mistakes spawn whose brief carries no provider identity is refused because
+#   independent review cannot be proved; a relaunch instead takes the provenance
+#   from whichever of the task record and the brief holds it (a promoted scout
+#   keeps it only in the record) and is refused only when both are silent or the
+#   two disagree. When
 #   the explicit mode carries less rigor than the project's standing posture, a
 #   loud one-line deviation notice is printed and the spawn continues.
 #   no-mistakes-prod-only is a registry policy rather than a task mode and is
@@ -1619,11 +1622,30 @@ if [ "$KIND" = ship ]; then
     exit 1
   fi
   if [ "$MODE" = no-mistakes ]; then
+    # A relaunch carries no flags: the provider provenance is whichever of the
+    # task record and the brief holds it. A promoted scout has it only in the
+    # record (fm-promote.sh writes it and never rewrites the scout brief), and a
+    # task predating this contract has it in neither until its brief is
+    # re-scaffolded, which is the supported recovery. Silence on one side is
+    # filled from the other; disagreement between them is still a refusal.
+    if [ "$RELAUNCH" -eq 1 ] && [ -z "$IMPLEMENTATION_PROVIDER" ]; then
+      IMPLEMENTATION_PROVIDER=$BRIEF_IMPLEMENTATION_PROVIDER
+    fi
+    if [ "$RELAUNCH" -eq 1 ] && [ -n "$IMPLEMENTATION_PROVIDER" ]; then
+      case "$IMPLEMENTATION_PROVIDER" in
+        openai|anthropic) ;;
+        *) echo "error: $ID records implementation-provider=$IMPLEMENTATION_PROVIDER, which is neither openai nor anthropic; Firstmate cannot prove an independent AI review" >&2; exit 1 ;;
+      esac
+    fi
     if [ -z "$BRIEF_IMPLEMENTATION_PROVIDER" ]; then
-      echo "error: $BRIEF records no implementation provider; without authoritative provider identity Firstmate cannot prove an independent AI review" >&2
-      exit 1
+      if [ "$RELAUNCH" -eq 1 ] && [ -n "$IMPLEMENTATION_PROVIDER" ]; then
+        echo "warning: $BRIEF records no implementation provider (promoted from a scout, or scaffolded before no-mistakes briefs recorded one); relaunching on the task's recorded implementation-provider=$IMPLEMENTATION_PROVIDER - the replacement must start no-mistakes with that provider" >&2
+      else
+        echo "error: $BRIEF records no implementation provider; without authoritative provider identity Firstmate cannot prove an independent AI review; re-scaffold it with bin/fm-brief.sh $ID <repo> --mode no-mistakes --implementation-provider <openai|anthropic>" >&2
+        exit 1
+      fi
     elif [ "$BRIEF_IMPLEMENTATION_PROVIDER" != "$IMPLEMENTATION_PROVIDER" ]; then
-      echo "error: validation mismatch for $ID: the brief says implementation-provider=$BRIEF_IMPLEMENTATION_PROVIDER but this spawn passed --implementation-provider $IMPLEMENTATION_PROVIDER; correct the flag or re-scaffold the brief" >&2
+      echo "error: validation mismatch for $ID: the brief says implementation-provider=$BRIEF_IMPLEMENTATION_PROVIDER but this task carries implementation-provider=$IMPLEMENTATION_PROVIDER; correct the flag or re-scaffold the brief" >&2
       exit 1
     fi
   elif [ -n "$BRIEF_IMPLEMENTATION_PROVIDER" ]; then
@@ -2575,7 +2597,7 @@ preserve_relaunch_meta() {
   if [ "$SPAWN_CONTROL_PARENT" = 1 ] && [ -n "${FM_CONTROL_RELAUNCH_TX:-}" ]; then
     echo "control_relaunch_tx=$FM_CONTROL_RELAUNCH_TX"
   fi
-} > "$SPAWN_META_PATH" || exit 1
+} > "$SPAWN_META_PATH"
 if [ "$RELAUNCH" -eq 1 ]; then
   SPAWN_META_PUBLISH_STARTED=1
   mv -f "$SPAWN_META_TMP" "$STATE/$ID.meta"
