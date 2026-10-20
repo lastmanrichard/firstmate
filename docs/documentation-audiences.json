@@ -205,6 +205,10 @@
       "audience": "public-product"
     },
     {
+      "path": "docs/agent-bus.md",
+      "audience": "operator-current"
+    },
+    {
       "path": "docs/agent-control.md",
       "audience": "maintainer-architecture"
     },
