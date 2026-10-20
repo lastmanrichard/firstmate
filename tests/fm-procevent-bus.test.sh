@@ -254,7 +254,12 @@ assert_contains "$body" "Deck is clear." "the reply text is otherwise preserved"
 [ "$(msg_field "$RID" to)" = slack-firstmate ] || fail "the reply is not addressed back to the bridge"
 [ "$(msg_field "$M1" status)" = "done" ] || fail "replying did not close the inbound message"
 assert_contains "$(adapter show 1)" "handled: yes" "a reply acknowledges the captured result"
-out=$(printf 'a different second answer\n' | adapter reply 1 -)
+# Node-based agent harnesses hand the child a socket as stdin, not a pipe.
+out=$(python3 -c 'import socket, subprocess, sys
+a, b = socket.socketpair(); b.sendall(b"a different second answer\n"); b.close()
+sys.exit(subprocess.call(sys.argv[1:], stdin=a))' \
+  env FM_HOME="$HOME_DIR" FM_BUS_URL="$URL" FM_BUS_TOKEN="$FM_TOKEN" FM_BUS_WAIT_SECONDS=1 \
+  "$ROOT/bin/fm-procevent-bus.sh" reply 1 - 2>&1)
 assert_contains "$out" "already-replied: $M1 -> $RID" "a repeated reply returns the first reply"
 [ "$(curl -sS "$URL/_test/state" | jq --arg id "$M1" '[.messages[] | select(.reply_to == $id)] | length')" = 1 ] \
   || fail "a repeated reply posted a second bus message"

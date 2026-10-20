@@ -388,7 +388,7 @@ cmd_reply() {
   resolve_sequence "$seq"
   case "$src" in
     --body-file) [ -f "$file" ] || die "reply body file does not exist: $file" ;;
-    -) file=/dev/stdin ;;
+    -) file= ;;
     *) usage ;;
   esac
   [ "$(classify_file "$RESULT")" = message ] || die "sequence $seq is not a bus message; use dismiss"
@@ -397,7 +397,10 @@ cmd_reply() {
   valid_id "$id" || die "captured message id is invalid"
   tmp=$(mktemp -d "${TMPDIR:-/tmp}/fm-bus-reply.XXXXXX") || die "cannot create staging directory"
   trap 'rm -rf -- "$tmp"' EXIT
-  scrub_stream < "$file" > "$tmp/body" 2> "$tmp/scrub" || die "cannot scrub the reply"
+  # Read `-` from the inherited descriptor: opening /dev/stdin fails (ENXIO)
+  # when stdin is a socket, as it is under Node-based agent harnesses.
+  if [ -n "$file" ]; then scrub_stream < "$file"; else scrub_stream; fi > "$tmp/body" 2> "$tmp/scrub" \
+    || die "cannot scrub the reply"
   cat "$tmp/scrub"
   grep -q '[^[:space:]]' "$tmp/body" || die "reply body is empty"
   units=$(jq -Rs '[explode[] | if . > 65535 then 2 else 1 end] | add // 0' < "$tmp/body")
