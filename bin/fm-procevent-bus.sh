@@ -56,7 +56,8 @@
 # Errors. Transport failures and 5xx responses back off inside the source and
 # never wake firstmate. A configuration error (401, 400, 403, other 4xx) is
 # captured once as an `error` result, deduplicated until the source succeeds
-# again.
+# again. A repeat of the same error ends the child with no output, so the
+# runner relaunches it and a corrected or rotated token in .env is re-read.
 #
 # Durability. The runner's boundary applies unchanged: capture before
 # publication and bounded re-announcement until handled. The handled
@@ -259,7 +260,7 @@ cmd_source() {
     esac
     if [ "$code" != 200 ]; then
       emit_error "$reason" "$code" && exit 0
-      sleep 60; continue
+      sleep "$((WAIT_SECONDS > 0 ? WAIT_SECONDS : 5))"; exit 3
     fi
     if ! jq -e '(.messages | type) == "array"' "$tmp/inbox.json" >/dev/null 2>&1; then
       sleep "$backoff"; backoff=$((backoff * 2)); [ "$backoff" -le 60 ] || backoff=60; continue
@@ -293,7 +294,7 @@ cmd_source() {
         || ! [[ "$exp" =~ ^[0-9T:.Z+-]{10,40}$ ]] || { [ -n "$rto" ] && ! valid_id "$rto"; }; then
         reason="malformed message metadata"
       elif [[ "$from" == slack* ]] \
-        && ! [[ "$conv" =~ ^slack:[^:]*:[A-Z0-9]+:[0-9]+\.[0-9]+:[0-9]+\.[0-9]+$ ]]; then
+        && ! [[ "$conv" =~ ^slack:[^:]*:[A-Z0-9]+:[0-9]+\.[0-9]+:[0-9]+\.[0-9]+:firstmate$ ]]; then
         reason="slack sender without a Slack conversation"
       fi
       if [ -n "$reason" ]; then
@@ -362,6 +363,7 @@ scrub_stream() {
     $n += s/-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----.*?(?:-----END [A-Z0-9 ]*PRIVATE KEY-----|\z)/[redacted private key]/gs;
     $n += s/\b(?:xox[abeoprs]|xapp)-[A-Za-z0-9-]{8,}/[redacted]/g;
     $n += s/\bcrsr_[A-Za-z0-9]{8,}/[redacted]/g;
+    $n += s/\babus_[A-Za-z0-9_-]{16,}/[redacted]/g;
     $n += s/\btskey-[A-Za-z0-9-]{8,}/[redacted]/g;
     $n += s/\bgh[pousr]_[A-Za-z0-9]{20,}/[redacted]/g;
     $n += s/\bgithub_pat_[A-Za-z0-9_]{20,}/[redacted]/g;
