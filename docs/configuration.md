@@ -2515,6 +2515,21 @@ The runner proves exactly one durability boundary: output that reached the runne
 
 `docs/verification/process-event-sources.md` holds the measurements and `.agents/skills/process-event-sources/SKILL.md` owns the handling procedure.
 
+## Agent-bus messages (.env and state/bus)
+
+`bin/fm-procevent-bus.sh` is a process-event adapter that reads this home's agent-bus inbox and returns replies through the bus.
+It is inert until armed, and [`agent-bus.md`](agent-bus.md) owns its integration contract, scope, and deployment prerequisites.
+
+Keys, read from the environment first and then from `$FM_HOME/.env` (or `FM_BUS_ENV_FILE`):
+
+- `FM_BUS_URL` - broker base URL.
+- `FM_BUS_TOKEN` - this home's bus bearer token; keep `.env` at mode `0600`.
+- `FM_BUS_ALLOWED_SENDERS` - bus senders allowed to reach this home, default `slack-firstmate richard`.
+- `FM_BUS_WAIT_SECONDS` - inbox long-poll wait, default 25.
+
+State lives in `state/bus/`: `cursor` (highest captured or refused message sequence), `rejected.log` (refused message ids and senders, never bodies), and `source-error` (the last reported configuration error, so it wakes only once).
+Captured messages are ordinary process-event results under `state/procevent-inbox/agent-bus.<sequence>.result`.
+
 ## Spoken interface and captain inbox (config/voice-*, config/inbox-*)
 
 The spoken interface in [`docs/voice-relay.md`](voice-relay.md) and the model-backed subcommands of `bin/fm-inbox.sh` reach a paid API in a named account, so no region, model id or AWS profile is shipped as a tracked default.
