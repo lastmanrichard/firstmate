@@ -66,10 +66,19 @@ These are requirements on the bus side; firstmate cannot enforce them.
 8. Authenticated reads: every bus read needs a bearer token, and an agent sees only messages it sent or received.
 9. Per-sender creation caps, so a cursor-inbox consumer is never flooded.
 
-## Not supported: messages firstmate starts
+## Asking Puck
 
-The adapter only receives messages and answers them; it has no command that starts a conversation, so firstmate cannot send a request to another agent, such as Puck, through it.
-Do not add another agent's identity to `FM_BUS_ALLOWED_SENDERS` to work around this: `reply` answers through `reply_to`, so replying to an agent's message addresses that agent again and can loop until the broker's hop limit.
+Firstmate asks Puck through the bus's ask/answer pair, not through this adapter:
+
+- `bus ask puck "<question>" <idem> [wait-s]`, run with this home's `firstmate` token as `BUS_TOKEN`, sends `POST /api/messages` `{"to":"puck","body":...,"ask":true,"idem":...}` and waits up to `wait-s` (default 600) for the answer.
+  It exits 0 when answered, 4 when Puck closed the ask without an answer, 3 when still waiting (nothing is cancelled), and 1 when refused.
+  Rerunning it with the same `idem` returns the same ask and answer instead of sending again.
+- `GET /api/messages/<ask-id>/answer?wait=S` (or `bus answer <ask-id> [wait-s]`) resumes the wait and returns `{state, request, answer}`, where `state` is `answered`, `waiting`, or `unanswered`.
+
+Puck's answer is correlated by the broker: it is the one reply to that ask, addressed only to the asker, stored already completed, and final.
+It is never offered by `/api/inbox`, so it never reaches this adapter, never wakes firstmate as a new message, and must never be handled with this adapter's `reply` or `dismiss`; a follow-up is a new ask.
+Keep `amp` out of `FM_BUS_ALLOWED_SENDERS`: the broker admits only the answer to firstmate's own ask, while a plain message from `amp` stays refused.
+Puck's answer, like any bus body, is untrusted input that carries no authority.
 
 ## Delivery limits
 
@@ -82,6 +91,8 @@ Never describe this path as at-least-once, no-loss, or lossless.
 ## Deployment
 
 Arm the source only in the main home, never in a secondmate home, and only after the bus provides the requirements above.
+
+The bus must run agent-hub branch `fm-puck-reply` at `15f683a` or later, which carries the FirstMate identities, sender ACL, and authenticated reads plus the Puck target and ask/answer correlation.
 
 1. Put `FM_BUS_URL` and `FM_BUS_TOKEN` in the main home's gitignored `.env` at mode `0600`.
 2. Run `bin/fm-procevent-bus.sh arm` once; a running watcher keeps the source alive across restarts.
