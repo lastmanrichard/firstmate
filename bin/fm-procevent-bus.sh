@@ -44,7 +44,7 @@
 #   FM_BUS_WAIT_SECONDS      inbox long-poll wait, default 25 (broker caps 30)
 #
 # Consumption model. The source reads GET /api/inbox with a persisted cursor
-# and never claims, so no lease can expire under a busy captain and redeliver.
+# and never claims, so no lease can expire while firstmate is busy and redeliver.
 # It emits exactly one bus message per captured result and refuses to emit a
 # message id that any earlier captured result already carries, so a restart or
 # re-read never produces a second wake for the same bus message. The cursor
@@ -354,7 +354,7 @@ cmd_pending() {
 
 # Outbound secret redaction. Defense in depth only: the Slack bridge must apply
 # its own scrub immediately before posting, because it knows every configured
-# credential and this home's captain is not a security boundary.
+# credential and firstmate itself is not a security boundary.
 scrub_stream() {
   FM_BUS_SCRUB_LITERAL=${BUS_TOKEN:-} perl -0777 -pe '
     BEGIN { $n = 0 }
