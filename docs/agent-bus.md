@@ -54,6 +54,7 @@ These are requirements on the bus side; firstmate cannot enforce them.
 1. A dedicated bridge identity `slack-firstmate`, separate from any other bot's bridge identity, so two bridges never race to claim each other's replies.
 2. A broker sender ACL: messages addressed to `firstmate` are accepted only from `slack-firstmate` and the operator identity `richard`.
    The adapter mirrors this with `FM_BUS_ALLOWED_SENDERS` as defense in depth, but the broker is the boundary.
+   Its default, `slack-firstmate richard`, suits a private single-operator deployment; set `FM_BUS_ALLOWED_SENDERS` in `.env` to change it, keeping it no wider than the broker ACL.
 3. A non-empty Slack user allowlist; the bridge must refuse to start when it is empty.
 4. The inbound conversation key `slack:<team>:<channel>:<thread_ts>:<message_ts>:firstmate` and the idempotency key `slack:<channel>:<message_ts>`.
    The adapter refuses a `slack*` sender whose conversation does not end in `:firstmate`, so a conversation built for another bot never wakes firstmate.
